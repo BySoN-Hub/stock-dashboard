@@ -146,6 +146,19 @@ def build_scores(raw, tickers, name_map):
             sig.append("出来高急増")
         signal_text = " / ".join(sig) if sig else "—"
 
+        # テクニカル状態の要約（各指標が今どうなっているか）
+        tech = []
+        if rsi <= 30:   tech.append(f"RSI{rsi:.0f}(売られすぎ)")
+        elif rsi >= 70: tech.append(f"RSI{rsi:.0f}(買われすぎ)")
+        else:           tech.append(f"RSI{rsi:.0f}(中立)")
+        if ma5 > ma25 > ma75: tech.append("移動平均=上昇配列")
+        elif ma25 > ma75:     tech.append("中期上昇")
+        else:                 tech.append("中期下降")
+        if v_macd > v_signal: tech.append("MACD上向き")
+        else:                 tech.append("MACD下向き")
+        tech.append(f"25日線乖離{dev25:+.1f}%")
+        tech_text = " / ".join(tech)
+
         rows.append({
             "ティッカー": t, "銘柄": name_map.get(t, t),
             "終値$": round(last_close, 2),
@@ -154,6 +167,7 @@ def build_scores(raw, tickers, name_map):
             "25日線乖離%": round(dev25, 1),
             "出来高倍率": round(vol_ratio, 1),
             "シグナル": signal_text,
+            "テクニカル要約": tech_text,
             "RSIスコア": s["RSI"], "トレンドスコア": s["trend"],
             "押し目スコア": s["dip"], "MACDスコア": s["macd"],
             "価格位置スコア": s["pos"], "総合スコア": buy_total,
@@ -199,8 +213,13 @@ def color_chg(v):
     if v < 0: return "color: red"
     return ""
 
+# 表に出す列（テクニカル要約は長いので表からは外し、上位3銘柄で見せる）
+table_cols = ["ティッカー","銘柄","終値$","前日比%","RSI","25日線乖離%",
+              "出来高倍率","シグナル","RSIスコア","トレンドスコア",
+              "押し目スコア","MACDスコア","価格位置スコア","総合スコア"]
+
 event = st.dataframe(
-    view.style
+    view[table_cols].style
         .background_gradient(subset=["総合スコア"], cmap="RdYlGn", vmin=40, vmax=100)
         .bar(subset=["RSIスコア","トレンドスコア","押し目スコア","MACDスコア","価格位置スコア"],
              color="#9ad0ec", vmin=0, vmax=20)
@@ -211,7 +230,7 @@ event = st.dataframe(
     on_select="rerun", selection_mode="single-row", key="rank_table",
 )
 
-st.subheader("上位3銘柄")
+st.subheader("上位3銘柄のテクニカル状態")
 top3 = view.head(3).reset_index()
 cols = st.columns(3)
 medals = ["1位", "2位", "3位"]
@@ -220,7 +239,9 @@ for i, (_, r) in enumerate(top3.iterrows()):
         st.metric(f"{medals[i]}　{r['ティッカー']}",
                   f"{r['総合スコア']} 点", f"{r['前日比%']:+.2f}%")
         st.progress(int(r["総合スコア"]) / 100)
-        st.caption(f"シグナル: {r['シグナル']}")
+        st.write(r["テクニカル要約"])
+        if r["シグナル"] != "—":
+            st.caption(f"検出シグナル: {r['シグナル']}")
 
 st.divider()
 st.subheader("銘柄チャート（株価＋移動平均線＋RSI）")
@@ -228,7 +249,7 @@ sel_ticker = None
 selected_rows = event.selection.rows if event and event.selection else []
 if selected_rows:
     sel_ticker = view.iloc[selected_rows[0]]["ティッカー"]
-    st.caption(f"表で選択中：{sel_ticker}")
+    st.caption(f"表で選択中：{sel_ticker}　/　{view.iloc[selected_rows[0]]['テクニカル要約']}")
 else:
     choices = [f"{r['ティッカー']}　{r['銘柄']}" for _, r in df.iterrows()]
     selected = st.selectbox("チャートを見たい銘柄を選択（表の行をタップでも切替わります）", choices)
