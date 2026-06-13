@@ -5,6 +5,30 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="米国株 スコアランキング", layout="wide")
+
+# ===== パスワード保護 =====
+def check_password():
+    def password_entered():
+        if st.session_state["pw"] == st.secrets["0809"]:
+            st.session_state["ok"] = True
+            del st.session_state["pw"]
+        else:
+            st.session_state["ok"] = False
+
+    if st.session_state.get("ok", False):
+        return True
+
+    st.text_input("パスワードを入力してください", type="password",
+                  on_change=password_entered, key="pw")
+    if "ok" in st.session_state and not st.session_state["ok"]:
+        st.error("パスワードが違います")
+    return False
+
+if not check_password():
+    st.stop()
+# ===== ここまで =====
+
+
 st.title("米国株 テクニカル スコアランキング（NASDAQ100）")
 st.caption("判断材料の補助ツールです。スコアは指標を点数化したもので、上がる確率や売買推奨ではありません。")
 
