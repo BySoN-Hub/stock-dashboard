@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 st.set_page_config(page_title="米国株 スコアランキング", layout="wide")
 
-# ===== スマホ向け CSS（フォント小さめ・余白詰め・タイトル見切れ対策） =====
+# ===== スマホ向け CSS =====
 st.markdown("""
 <style>
 html, body, .stApp, p, div, span, table, th, td {
@@ -75,9 +75,7 @@ def load_raw(index_code):
     fetched_at = datetime.now(ZoneInfo("Asia/Tokyo"))
     return raw, tickers, name_map, fetched_at
 
-# ===== スコア計算（任意の終値系列・末尾位置から算出できる共通関数） =====
 def score_from_series(close, volume):
-    """close, volume は最新が末尾の Series。最後の行時点でのスコアを返す。"""
     if len(close) < 80:
         return None
     ma5, ma25, ma75 = float(close.rolling(5).mean().iloc[-1]), float(close.rolling(25).mean().iloc[-1]), float(close.rolling(75).mean().iloc[-1])
@@ -125,65 +123,6 @@ def score_from_series(close, volume):
             "recent_high": recent_high, "recent_low": recent_low,
             "last_close": last_close}
 
-def build_scores(raw, tickers, name_map):
-    rows = []
-    for t in tickers:
-        try:
-            close = raw[t]["Close"].dropna()
-            volume = raw[t]["Volume"].dropna()
-        except Exception:
-            continue
-        sc = score_from_series(close, volume)
-        if sc is None:
-            continue
-        prev_close = float(close.iloc[-2])
-        chg = (sc["last_close"] - prev_close) / prev_close * 100
-
-        sig = []
-        if sc["rsi"] >= 75 or sc["dev25"] >= 12:
-            sig.append("過熱注意")
-        if sc["rsi"] <= 30 and sc["ma25"] > sc["ma75"]:
-            sig.append("押し目候補")
-        if sc["vol_ratio"] >= 2:
-            sig.append("出来高急増")
-        signal_text = " / ".join(sig) if sig else "—"
-
-        tech = []
-        if sc["rsi"] <= 30:
-            tech.append(f"RSI{sc['rsi']:.0f}(売られすぎ)")
-        elif sc["rsi"] >= 70:
-            tech.append(f"RSI{sc['rsi']:.0f}(買われすぎ)")
-        else:
-            tech.append(f"RSI{sc['rsi']:.0f}(中立)")
-        if sc["ma5"] > sc["ma25"] > sc["ma75"]:
-            tech.append("移動平均=上昇配列")
-        elif sc["ma25"] > sc["ma75"]:
-            tech.append("中期上昇")
-        else:
-            tech.append("中期下降")
-        tech.append("MACD上向き" if sc["v_macd"] > sc["v_signal"] else "MACD下向き")
-        tech.append(f"25日線乖離{sc['dev25']:+.1f}%")
-        tech_text = " / ".join(tech)
-
-        rows.append({
-            "ティッカー": t,
-            "銘柄": name_map.get(t, t),
-            "終値$": round(sc["last_close"], 2),
-            "前日比%": round(chg, 2),
-            "RSI": round(sc["rsi"], 1),
-            "25日線乖離%": round(sc["dev25"], 1),
-            "出来高倍率": round(sc["vol_ratio"], 1),
-            "シグナル": signal_text,
-            "テクニカル要約": tech_text,
-            "総合スコア": sc["total"],
-            "_RSIスコア": None, "_dummy": None,  # placeholder（後で除去）
-        })
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.drop(columns=["_RSIスコア", "_dummy"])
-    return df
-
-# 表用にサブスコアも必要なので、別途サブスコア付きでも作っておく
 def build_scores_full(raw, tickers, name_map):
     rows = []
     for t in tickers:
@@ -273,10 +212,8 @@ def build_scores_full(raw, tickers, name_map):
         })
     return pd.DataFrame(rows)
 
-# ===== 簡易検証（過去スコア→その後リターン） =====
 @st.cache_data(ttl=1800)
 def run_backtest(index_code, hold_days):
-    """hold_days 営業日前の時点でスコアを計算し、その後のリターンをスコア帯別に集計。"""
     raw, tickers, name_map, _ = load_raw(index_code)
     records = []
     for t in tickers:
@@ -287,7 +224,6 @@ def run_backtest(index_code, hold_days):
             continue
         if len(close) < 80 + hold_days:
             continue
-        # hold_days 前までのデータでスコアを算出
         past_close = close.iloc[:-hold_days]
         past_volume = volume.iloc[:-hold_days]
         sc = score_from_series(past_close, past_volume)
@@ -297,8 +233,7 @@ def run_backtest(index_code, hold_days):
         now_price = float(close.iloc[-1])
         ret = (now_price - entry_price) / entry_price * 100
         records.append({"ticker": t, "score": sc["total"], "return": ret})
-    bt = pd.DataFrame(records)
-    return bt
+    return pd.DataFrame(records)
 
 # ===== UI =====
 index_label = st.selectbox("対象とする市場（指数）を選択", list(INDEX_OPTIONS.keys()))
@@ -418,63 +353,101 @@ st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
 
-# ===== 簡易検証機能 =====
-st.subheader("スコアの簡易検証（過去スコア → その後の値動き）")
-st.caption("過去のある時点でスコアを計算し、そこから現在までに各銘柄がどれだけ動いたかを、スコア帯別に集計します。"
-           "スコアが高いほどその後上がりやすかったかを確認できます。")
+# ===== 簡易検証機能（直感的バージョン） =====
+st.subheader("スコアの簡易検証 ─ 高スコアは本当に上がった？")
+st.caption("過去のある時点でスコアを計算し、そこから現在までに各銘柄がどれだけ動いたかを集計します。")
 
-hold_label = st.selectbox("何営業日前のスコアで検証するか",
+hold_label = st.selectbox("いつのスコアで検証する？",
                           ["20営業日前（約1か月）", "40営業日前（約2か月）", "60営業日前（約3か月）"])
 hold_map = {"20営業日前（約1か月）": 20, "40営業日前（約2か月）": 40, "60営業日前（約3か月）": 60}
 hold_days = hold_map[hold_label]
 
-with st.spinner("過去スコアとその後リターンを計算中…"):
+with st.spinner("過去スコアとその後の値動きを計算中…"):
     bt = run_backtest(index_code, hold_days)
 
 if bt.empty:
-    st.warning("検証に必要な期間のデータが不足しています。別の期間を選んでください。")
+    st.warning("検証に必要な期間のデータが不足しています。短い期間を選んでください。")
 else:
-    # スコア帯で分類
     def band(x):
         if x >= 80:
-            return "80点以上"
+            return "高スコア（80点以上）"
         elif x >= 60:
-            return "60〜79点"
+            return "中スコア（60〜79点）"
         else:
-            return "60点未満"
-    bt["スコア帯"] = bt["score"].apply(band)
-    order = ["80点以上", "60〜79点", "60点未満"]
-    summary = (bt.groupby("スコア帯")["return"]
-               .agg(["count", "mean", "median"])
-               .reindex(order)
-               .dropna())
-    summary.columns = ["銘柄数", "平均リターン%", "中央値リターン%"]
-    summary["平均リターン%"] = summary["平均リターン%"].round(2)
-    summary["中央値リターン%"] = summary["中央値リターン%"].round(2)
+            return "低スコア（60点未満）"
+    bt["帯"] = bt["score"].apply(band)
+    order = ["高スコア（80点以上）", "中スコア（60〜79点）", "低スコア（60点未満）"]
 
-    # 勝率（プラスになった割合）
-    winrate = bt.assign(win=bt["return"] > 0).groupby("スコア帯")["win"].mean().reindex(order).dropna()
-    summary["上昇した割合%"] = (winrate * 100).round(1)
+    means = bt.groupby("帯")["return"].mean().reindex(order)
+    counts = bt.groupby("帯")["return"].count().reindex(order)
+    winrates = bt.assign(win=bt["return"] > 0).groupby("帯")["win"].mean().reindex(order) * 100
 
-    st.write(f"**{hold_label}** のスコアで分類し、その後現在までのリターンを集計（市場全体の母集団）")
-    st.dataframe(
-        summary.style.background_gradient(subset=["平均リターン%"], cmap="RdYlGn"),
-        use_container_width=True,
-    )
+    high = means.get("高スコア（80点以上）")
+    low = means.get("低スコア（60点未満）")
 
-    # 棒グラフ
-    fig_bt = go.Figure()
-    fig_bt.add_trace(go.Bar(x=summary.index, y=summary["平均リターン%"],
-                            marker_color=["#2ca02c", "#ff7f0e", "#d62728"][:len(summary)],
-                            text=summary["平均リターン%"], textposition="outside"))
-    fig_bt.update_layout(title="スコア帯別 平均リターン%", height=320,
-                         margin=dict(l=10, r=10, t=40, b=10),
-                         yaxis_title="その後のリターン%")
-    st.plotly_chart(fig_bt, use_container_width=True)
+    # ---- 結論を一言で（一番上に大きく） ----
+    if high is not None and low is not None:
+        diff = high - low
+        if diff >= 3:
+            st.success(f"✅ 結論：**スコアが高い銘柄ほど、その後よく上がっていました**　"
+                       f"（高スコアは低スコアより平均 {diff:+.1f}ポイント高いリターン）")
+        elif diff <= -3:
+            st.error(f"⚠ 結論：**この期間は、スコアが高いほど逆に伸び悩んでいました**　"
+                     f"（高スコアは低スコアより平均 {diff:+.1f}ポイント低いリターン）。配点の見直し余地あり。")
+        else:
+            st.info("➖ 結論：**スコアの高さと値動きに、はっきりした差は出ませんでした**　"
+                    "（この期間では）。相場全体の地合いに左右された可能性があります。")
+    else:
+        st.info("一部のスコア帯にデータが足りず、比較が十分にできませんでした。")
 
-    st.caption("⚠ これは過去データでの傾向であり、将来も同じように動く保証はありません。"
-               "サンプル数が少ない期間や相場全体が一方向に動いた局面では偏りが出ます。"
-               "あくまでスコアの傾向確認用です。")
+    # ---- スコア帯ごとのカード（色・矢印で直感的に） ----
+    st.write("##### スコア帯ごとの「その後の平均リターン」")
+    ccols = st.columns(3)
+    palette = {"高スコア（80点以上）": "#2ca02c", "中スコア（60〜79点）": "#ff7f0e", "低スコア（60点未満）": "#d62728"}
+    for i, b in enumerate(order):
+        m = means.get(b)
+        if m is None or pd.isna(m):
+            with ccols[i]:
+                st.metric(b, "データ不足")
+            continue
+        arrow = "📈" if m > 0 else "📉"
+        with ccols[i]:
+            st.metric(f"{arrow} {b}", f"{m:+.1f}%",
+                      f"勝率 {winrates.get(b):.0f}%（{int(counts.get(b))}銘柄）")
+
+    # ---- 散布図（点が右肩上がりなら関係あり） ----
+    st.write("##### スコアとその後リターンの関係（点が右上がりほど関係が強い）")
+    fig_sc = go.Figure()
+    fig_sc.add_trace(go.Scatter(
+        x=bt["score"], y=bt["return"], mode="markers",
+        marker=dict(size=8, color=bt["return"], colorscale="RdYlGn",
+                    cmin=-20, cmax=20, line=dict(width=0.5, color="gray")),
+        text=bt["ticker"], hovertemplate="%{text}<br>スコア %{x}<br>その後 %{y:.1f}%<extra></extra>"))
+    # 傾向線（単回帰）
+    if len(bt) >= 3:
+        coef = pd.np.polyfit(bt["score"], bt["return"], 1) if hasattr(pd, "np") else None
+    import numpy as np
+    coef = np.polyfit(bt["score"], bt["return"], 1)
+    xline = np.array([bt["score"].min(), bt["score"].max()])
+    yline = coef[0] * xline + coef[1]
+    fig_sc.add_trace(go.Scatter(x=xline, y=yline, mode="lines",
+                                line=dict(color="black", dash="dash"), name="傾向線"))
+    fig_sc.add_hline(y=0, line_color="gray", line_width=1)
+    fig_sc.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10),
+                         xaxis_title="その時点の総合スコア", yaxis_title="その後のリターン%",
+                         showlegend=False)
+    st.plotly_chart(fig_sc, use_container_width=True)
+
+    slope = coef[0]
+    if slope > 0.05:
+        st.caption(f"傾向線は右上がり（傾き {slope:+.2f}）＝スコアが高いほどリターンも高め、という関係がこの期間では見られます。")
+    elif slope < -0.05:
+        st.caption(f"傾向線は右下がり（傾き {slope:+.2f}）＝この期間はスコアと逆の関係でした。")
+    else:
+        st.caption(f"傾向線はほぼ水平（傾き {slope:+.2f}）＝スコアと値動きの関係は弱めです。")
+
+    st.caption("⚠ これは過去データでの傾向で、将来を保証するものではありません。"
+               "サンプル数が少ない期間や相場全体が一方向に動いた局面では偏りが出ます。スコアの傾向確認用としてご利用ください。")
 
 st.divider()
 st.caption("構成銘柄は yfiua/index-constituents、株価は yfinance の遅延データ。スコア・シグナルは一例で上がる確率ではありません。最終判断はご自身で。")
