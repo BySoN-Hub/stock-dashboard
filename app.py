@@ -172,15 +172,20 @@ def color_chg(v):
     if v > 0: return "color: green"
     if v < 0: return "color: red"
     return ""
-styled = (view.style
-    .background_gradient(subset=["総合スコア"], cmap="RdYlGn", vmin=40, vmax=100)
-    .bar(subset=["RSIスコア","トレンドスコア","押し目スコア","MACDスコア","価格位置スコア"],
-         color="#9ad0ec", vmin=0, vmax=20)
+
+# 表で銘柄を選べるようにする（行選択を有効化）
+event = st.dataframe(
+    view.style
+        .background_gradient(subset=["総合スコア"], cmap="RdYlGn", vmin=40, vmax=100)
+        .bar(subset=["RSIスコア","トレンドスコア","押し目スコア","MACDスコア","価格位置スコア"],
+             color="#9ad0ec", vmin=0, vmax=20)
         .map(color_chg, subset=["前日比%"])
-    .format({"終値$":"{:.2f}", "前日比%":"{:+.2f}", "RSI":"{:.1f}",
-             "25日線乖離%":"{:+.1f}", "出来高倍率":"{:.1f}倍"})
+        .format({"終値$":"{:.2f}", "前日比%":"{:+.2f}", "RSI":"{:.1f}",
+                 "25日線乖離%":"{:+.1f}", "出来高倍率":"{:.1f}倍"}),
+    use_container_width=True, height=600,
+    on_select="rerun", selection_mode="single-row",
+    key="rank_table",
 )
-st.dataframe(styled, use_container_width=True, height=600)
 
 st.subheader("上位3銘柄")
 top3 = view.head(3).reset_index()
@@ -195,9 +200,17 @@ for i, (_, r) in enumerate(top3.iterrows()):
 
 st.divider()
 st.subheader("銘柄チャート（株価＋移動平均線＋RSI）")
-choices = [f"{r['ティッカー']}　{r['銘柄']}" for _, r in df.iterrows()]
-selected = st.selectbox("チャートを見たい銘柄を選択", choices)
-sel_ticker = selected.split("　")[0]
+
+# 表で行が選ばれていれば、その銘柄を使う。なければプルダウンで選択。
+sel_ticker = None
+selected_rows = event.selection.rows if event and event.selection else []
+if selected_rows:
+    sel_ticker = view.iloc[selected_rows[0]]["ティッカー"]
+    st.caption(f"表で選択中：{sel_ticker}")
+else:
+    choices = [f"{r['ティッカー']}　{r['銘柄']}" for _, r in df.iterrows()]
+    selected = st.selectbox("チャートを見たい銘柄を選択（表の行をクリックしても切替わります）", choices)
+    sel_ticker = selected.split("　")[0]
 
 close = raw[sel_ticker]["Close"].dropna()
 ma5  = close.rolling(5).mean()
