@@ -176,7 +176,7 @@ styled = (view.style
     .background_gradient(subset=["総合スコア"], cmap="RdYlGn", vmin=40, vmax=100)
     .bar(subset=["RSIスコア","トレンドスコア","押し目スコア","MACDスコア","価格位置スコア"],
          color="#9ad0ec", vmin=0, vmax=20)
-    .applymap(color_chg, subset=["前日比%"])
+        .map(color_chg, subset=["前日比%"])
     .format({"終値$":"{:.2f}", "前日比%":"{:+.2f}", "RSI":"{:.1f}",
              "25日線乖離%":"{:+.1f}", "出来高倍率":"{:.1f}倍"})
 )
