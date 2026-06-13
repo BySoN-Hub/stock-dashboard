@@ -9,7 +9,7 @@ st.set_page_config(page_title="米国株 スコアランキング", layout="wide
 # ===== パスワード保護 =====
 def check_password():
     def password_entered():
-        if st.session_state["pw"] == st.secrets["0809"]:
+        if st.session_state["pw"] == st.secrets["password"]:
             st.session_state["ok"] = True
             del st.session_state["pw"]
         else:
