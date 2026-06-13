@@ -159,13 +159,28 @@ col_a, col_b = st.columns(2)
 with col_a:
     top_n = st.slider("表示する上位件数", 10, len(df), 30, step=5)
 with col_b:
-    sig_filter = st.selectbox("シグナルで絞り込む",
-                              ["すべて", "押し目候補", "過熱注意", "出来高急増"])
+    view_mode = st.selectbox(
+        "目的で絞り込む",
+        ["すべて表示", "買い検討（押し目候補）", "売り検討（過熱注意）", "出来高急増"]
+    )
 
 view = df.copy()
-if sig_filter != "すべて":
-    view = view[view["シグナル"].str.contains(sig_filter)]
+if view_mode == "買い検討（押し目候補）":
+    view = view[view["シグナル"].str.contains("押し目候補")]
+    view = view.sort_values("総合スコア", ascending=False)
+elif view_mode == "売り検討（過熱注意）":
+    view = view[view["シグナル"].str.contains("過熱注意")]
+    # 売り目線では「より過熱しているもの」が上に来るようRSIの高い順に
+    view = view.sort_values("RSI", ascending=False)
+elif view_mode == "出来高急増":
+    view = view[view["シグナル"].str.contains("出来高急増")]
+    view = view.sort_values("出来高倍率", ascending=False)
+
 view = view.head(top_n)
+
+if view.empty:
+    st.warning("この条件に当てはまる銘柄は今はありません。")
+
 
 st.subheader("総合スコアランキング")
 def color_chg(v):
