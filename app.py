@@ -170,10 +170,8 @@ def build_scores(raw, tickers, name_map):
     return pd.DataFrame(rows)
 
 # ===== UI =====
-# (4) 市場選択と表示件数を横並び
-c1, c2 = st.columns(2)
-with c1:
-    index_label = st.selectbox("対象とする市場（指数）を選択", list(INDEX_OPTIONS.keys()))
+# 市場選択
+index_label = st.selectbox("対象とする市場（指数）を選択", list(INDEX_OPTIONS.keys()))
 index_code = INDEX_OPTIONS[index_label]
 
 with st.spinner(f"{index_label} を取得・計算中…（銘柄数により1〜数分）"):
@@ -183,12 +181,10 @@ with st.spinner(f"{index_label} を取得・計算中…（銘柄数により1�
 df = df.sort_values("総合スコア", ascending=False).reset_index(drop=True)
 df.index = df.index + 1
 
-with c2:
-    max_n = max(10, len(df))
-    default_n = min(30, max_n)
-    top_n = st.slider("表示する上位件数", 10, max_n, default_n, step=5)
+# 表示件数は30位固定
+top_n = 30
 
-# (4) 目的で絞り込む と データ最終取得 を横並び
+# 目的で絞り込む と データ最終取得 を横並び
 c3, c4 = st.columns(2)
 with c3:
     view_mode = st.selectbox(
@@ -213,10 +209,9 @@ if view.empty:
     st.warning("この条件に当てはまる銘柄は今はありません。")
     st.stop()
 
-st.caption(f"該当 {len(view)} 銘柄を表示中")
-
 # ===== ランキング表 =====
-st.subheader("総合スコアランキング")
+st.subheader("総合スコアランキング　※30位までを表示")
+st.caption(f"該当 {len(view)} 銘柄を表示中")
 
 def color_chg(v):
     return "color: green" if v > 0 else ("color: red" if v < 0 else "")
@@ -235,7 +230,7 @@ styled = (view_tbl.style
              "25日線乖離%": "{:+.1f}%", "出来高倍率": "{:.1f}倍"})
 )
 
-# (2) 高さを行数に合わせて自動調整（空白行を出さない）
+# 高さを行数に合わせて自動調整（空白行を出さない）
 row_height = 36
 table_height = min((len(view_tbl) + 1) * row_height + 3, 700)
 
@@ -255,7 +250,6 @@ cols = st.columns(3)
 medals = ["1位", "2位", "3位"]
 for i, (_, r) in enumerate(top3.iterrows()):
     with cols[i]:
-        # (1) 前日比であることを明示
         st.metric(f"{medals[i]}　{r['ティッカー']}", f"{r['総合スコア']} 点",
                   f"前日比 {r['前日比%']:+.2f}%")
         st.progress(int(r["総合スコア"]) / 100)
