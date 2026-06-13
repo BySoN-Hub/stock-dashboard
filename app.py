@@ -8,6 +8,25 @@ from zoneinfo import ZoneInfo
 
 st.set_page_config(page_title="米国株 スコアランキング", layout="wide")
 
+# ===== スマホ向けの見た目調整（フォント・余白を詰める）=====
+st.markdown("""
+<style>
+html, body, [class*="css"], .stApp, p, div, span, table, th, td {
+    font-family: "Meiryo", "メイリオ", "Hiragino Kaku Gothic ProN", sans-serif !important;
+}
+.block-container {
+    padding-top: 1rem !important; padding-bottom: 1rem !important;
+    padding-left: 0.6rem !important; padding-right: 0.6rem !important;
+}
+h1 { font-size: 1.4rem !important; margin-bottom: 0.3rem !important; }
+h2, h3 { margin-top: 0.6rem !important; margin-bottom: 0.3rem !important; }
+div[data-testid="stVerticalBlock"] { gap: 0.5rem !important; }
+hr { margin: 0.5rem 0 !important; }
+.stDataFrame { font-size: 0.8rem !important; }
+.stCaption, .caption { font-size: 0.72rem !important; }
+</style>
+""", unsafe_allow_html=True)
+
 # ===== パスワード保護 =====
 def check_password():
     def password_entered():
@@ -87,9 +106,7 @@ def build_scores(raw, tickers, name_map):
         recent_high = float(close.tail(60).max())
         recent_low  = float(close.tail(60).min())
         dev25 = (last_close - ma25) / ma25 * 100
-
         chg = (last_close - prev_close) / prev_close * 100
-
         vol_avg = float(volume.tail(25).mean())
         vol_last = float(volume.iloc[-1])
         vol_ratio = vol_last / vol_avg if vol_avg > 0 else 0
@@ -166,21 +183,15 @@ with col_b:
 
 view = df.copy()
 if view_mode == "買い検討（押し目候補）":
-    view = view[view["シグナル"].str.contains("押し目候補")]
-    view = view.sort_values("総合スコア", ascending=False)
+    view = view[view["シグナル"].str.contains("押し目候補")].sort_values("総合スコア", ascending=False)
 elif view_mode == "売り検討（過熱注意）":
-    view = view[view["シグナル"].str.contains("過熱注意")]
-    # 売り目線では「より過熱しているもの」が上に来るようRSIの高い順に
-    view = view.sort_values("RSI", ascending=False)
+    view = view[view["シグナル"].str.contains("過熱注意")].sort_values("RSI", ascending=False)
 elif view_mode == "出来高急増":
-    view = view[view["シグナル"].str.contains("出来高急増")]
-    view = view.sort_values("出来高倍率", ascending=False)
-
+    view = view[view["シグナル"].str.contains("出来高急増")].sort_values("出来高倍率", ascending=False)
 view = view.head(top_n)
 
 if view.empty:
     st.warning("この条件に当てはまる銘柄は今はありません。")
-
 
 st.subheader("総合スコアランキング")
 def color_chg(v):
@@ -188,7 +199,6 @@ def color_chg(v):
     if v < 0: return "color: red"
     return ""
 
-# 表で銘柄を選べるようにする（行選択を有効化）
 event = st.dataframe(
     view.style
         .background_gradient(subset=["総合スコア"], cmap="RdYlGn", vmin=40, vmax=100)
@@ -197,9 +207,8 @@ event = st.dataframe(
         .map(color_chg, subset=["前日比%"])
         .format({"終値$":"{:.2f}", "前日比%":"{:+.2f}", "RSI":"{:.1f}",
                  "25日線乖離%":"{:+.1f}", "出来高倍率":"{:.1f}倍"}),
-    use_container_width=True, height=600,
-    on_select="rerun", selection_mode="single-row",
-    key="rank_table",
+    use_container_width=True, height=500,
+    on_select="rerun", selection_mode="single-row", key="rank_table",
 )
 
 st.subheader("上位3銘柄")
@@ -215,8 +224,6 @@ for i, (_, r) in enumerate(top3.iterrows()):
 
 st.divider()
 st.subheader("銘柄チャート（株価＋移動平均線＋RSI）")
-
-# 表で行が選ばれていれば、その銘柄を使う。なければプルダウンで選択。
 sel_ticker = None
 selected_rows = event.selection.rows if event and event.selection else []
 if selected_rows:
@@ -224,7 +231,7 @@ if selected_rows:
     st.caption(f"表で選択中：{sel_ticker}")
 else:
     choices = [f"{r['ティッカー']}　{r['銘柄']}" for _, r in df.iterrows()]
-    selected = st.selectbox("チャートを見たい銘柄を選択（表の行をクリックしても切替わります）", choices)
+    selected = st.selectbox("チャートを見たい銘柄を選択（表の行をタップでも切替わります）", choices)
     sel_ticker = selected.split("　")[0]
 
 close = raw[sel_ticker]["Close"].dropna()
@@ -243,7 +250,8 @@ fig.add_trace(go.Scatter(x=ma75.index, y=ma75, name="75日線", line=dict(color=
 fig.add_trace(go.Scatter(x=rsi.index, y=rsi, name="RSI", line=dict(color="purple")), row=2, col=1)
 fig.add_hline(y=70, line_dash="dash", line_color="red",  row=2, col=1)
 fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-fig.update_layout(height=600, hovermode="x unified", legend=dict(orientation="h"))
+fig.update_layout(height=520, hovermode="x unified",
+                  legend=dict(orientation="h"), margin=dict(l=10, r=10, t=40, b=10))
 st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
