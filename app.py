@@ -28,17 +28,15 @@ if not check_password():
     st.stop()
 # ===== ここまで =====
 
-
-st.title("米国株 テクニカル スコアランキング（NASDAQ100）")
+st.title("米国株 テクニカル スコアランキング")
 st.caption("判断材料の補助ツールです。スコアは指標を点数化したもので、上がる確率や売買推奨ではありません。")
 
-# 選べる母集団の一覧（表示名: CSVのコード）
+# 選べる母集団
 INDEX_OPTIONS = {
     "NASDAQ100（米ハイテク中心100社）": "nasdaq100",
     "S&P500（米国の主要500社）": "sp500",
     "ダウ平均（米国の代表30社）": "dowjones",
 }
-
 
 @st.cache_data(ttl=86400)
 def load_symbols(index_code):
@@ -47,7 +45,6 @@ def load_symbols(index_code):
     df.columns = [c.lower() for c in df.columns]
     return df[["symbol", "name"]].dropna()
 
-
 def calc_rsi(close, period=14):
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
@@ -55,7 +52,6 @@ def calc_rsi(close, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# 株価データ全体をキャッシュ（チャートでも使い回す）
 @st.cache_data(ttl=1800)
 def load_raw(index_code):
     syms = load_symbols(index_code)
@@ -123,7 +119,7 @@ def build_scores(raw, tickers, name_map):
         })
     return pd.DataFrame(rows)
 
-# どの指数を見るか選択
+# 母集団の選択
 index_label = st.selectbox("対象とする市場（指数）を選択", list(INDEX_OPTIONS.keys()))
 index_code = INDEX_OPTIONS[index_label]
 
@@ -147,11 +143,21 @@ styled = (view.style
 )
 st.dataframe(styled, use_container_width=True, height=600)
 
-# ===== ここから新機能：銘柄を選ぶとチャート表示 =====
+# 上位3銘柄
+st.subheader("上位3銘柄")
+top3 = view.head(3).reset_index()
+cols = st.columns(3)
+medals = ["1位", "2位", "3位"]
+for i, (_, r) in enumerate(top3.iterrows()):
+    with cols[i]:
+        st.metric(f"{medals[i]}　{r['ティッカー']}", f"{r['総合スコア']} 点", help=r["銘柄"])
+        st.progress(int(r["総合スコア"]) / 100)
+        st.caption(f"RSI {r['RSIスコア']} / トレンド {r['トレンドスコア']} / "
+                   f"押し目 {r['押し目スコア']} / MACD {r['MACDスコア']} / 位置 {r['価格位置スコア']}")
+
+# 銘柄チャート
 st.divider()
 st.subheader("銘柄チャート（株価＋移動平均線＋RSI）")
-
-# ランキングに入っている銘柄から選択
 choices = [f"{r['ティッカー']}　{r['銘柄']}" for _, r in df.iterrows()]
 selected = st.selectbox("チャートを見たい銘柄を選択", choices)
 sel_ticker = selected.split("　")[0]
@@ -162,7 +168,6 @@ ma25 = close.rolling(25).mean()
 ma75 = close.rolling(75).mean()
 rsi  = calc_rsi(close)
 
-# 上段=価格＋移動平均、下段=RSI の2段チャート
 fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                     row_heights=[0.7, 0.3], vertical_spacing=0.05,
                     subplot_titles=(f"{sel_ticker} 株価と移動平均線", "RSI"))
@@ -171,7 +176,6 @@ fig.add_trace(go.Scatter(x=ma5.index,  y=ma5,  name="5日線",  line=dict(color=
 fig.add_trace(go.Scatter(x=ma25.index, y=ma25, name="25日線", line=dict(color="blue")), row=1, col=1)
 fig.add_trace(go.Scatter(x=ma75.index, y=ma75, name="75日線", line=dict(color="green")), row=1, col=1)
 fig.add_trace(go.Scatter(x=rsi.index, y=rsi, name="RSI", line=dict(color="purple")), row=2, col=1)
-# RSIの30・70ライン
 fig.add_hline(y=70, line_dash="dash", line_color="red",  row=2, col=1)
 fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
 fig.update_layout(height=600, hovermode="x unified", legend=dict(orientation="h"))
