@@ -3,6 +3,8 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 st.set_page_config(page_title="米国株 スコアランキング", layout="wide")
 
@@ -14,10 +16,8 @@ def check_password():
             del st.session_state["pw"]
         else:
             st.session_state["ok"] = False
-
     if st.session_state.get("ok", False):
         return True
-
     st.text_input("パスワードを入力してください", type="password",
                   on_change=password_entered, key="pw")
     if "ok" in st.session_state and not st.session_state["ok"]:
@@ -29,9 +29,8 @@ if not check_password():
 # ===== ここまで =====
 
 st.title("米国株 テクニカル スコアランキング")
-st.caption("判断材料の補助ツールです。スコアは指標を点数化したもので、上がる確率や売買推奨ではありません。")
+st.caption("判断材料の補助ツールです。スコアやシグナルは指標を点数化したもので、上がる確率や売買推奨ではありません。")
 
-# 選べる母集団
 INDEX_OPTIONS = {
     "NASDAQ100（米ハイテク中心100社）": "nasdaq100",
     "S&P500（米国の主要500社）": "sp500",
@@ -59,13 +58,15 @@ def load_raw(index_code):
     name_map = dict(zip(syms["symbol"], syms["name"]))
     raw = yf.download(tickers, period="6mo", interval="1d",
                       progress=False, auto_adjust=True, group_by="ticker")
-    return raw, tickers, name_map
+    fetched_at = datetime.now(ZoneInfo("Asia/Tokyo"))
+    return raw, tickers, name_map, fetched_at
 
 def build_scores(raw, tickers, name_map):
     rows = []
     for t in tickers:
         try:
             close = raw[t]["Close"].dropna()
+            volume = raw[t]["Volume"].dropna()
         except Exception:
             continue
         if len(close) < 80:
@@ -82,9 +83,17 @@ def build_scores(raw, tickers, name_map):
         v_macd, v_signal = float(macd_s.iloc[-1]), float(signal_s.iloc[-1])
         v_hist, hist_prev = float(hist_s.iloc[-1]), float(hist_s.iloc[-2])
         last_close = float(close.iloc[-1])
+        prev_close = float(close.iloc[-2])
         recent_high = float(close.tail(60).max())
         recent_low  = float(close.tail(60).min())
         dev25 = (last_close - ma25) / ma25 * 100
+
+        chg = (last_close - prev_close) / prev_close * 100
+
+        vol_avg = float(volume.tail(25).mean())
+        vol_last = float(volume.iloc[-1])
+        vol_ratio = vol_last / vol_avg if vol_avg > 0 else 0
+
         s = {}
         if rsi <= 30:   s["RSI"] = 20
         elif rsi <= 40: s["RSI"] = 16
@@ -109,53 +118,81 @@ def build_scores(raw, tickers, name_map):
         elif pos <= 50: s["pos"] = 14
         elif pos <= 75: s["pos"] = 9
         else:           s["pos"] = 4
+        buy_total = sum(s.values())
+
+        sig = []
+        if rsi >= 75 or dev25 >= 12:
+            sig.append("過熱注意")
+        if rsi <= 30 and ma25 > ma75:
+            sig.append("押し目候補")
+        if vol_ratio >= 2:
+            sig.append("出来高急増")
+        signal_text = " / ".join(sig) if sig else "—"
+
         rows.append({
             "ティッカー": t, "銘柄": name_map.get(t, t),
-            "終値$": round(last_close, 2), "RSI": round(rsi, 1),
+            "終値$": round(last_close, 2),
+            "前日比%": round(chg, 2),
+            "RSI": round(rsi, 1),
             "25日線乖離%": round(dev25, 1),
+            "出来高倍率": round(vol_ratio, 1),
+            "シグナル": signal_text,
             "RSIスコア": s["RSI"], "トレンドスコア": s["trend"],
             "押し目スコア": s["dip"], "MACDスコア": s["macd"],
-            "価格位置スコア": s["pos"], "総合スコア": sum(s.values()),
+            "価格位置スコア": s["pos"], "総合スコア": buy_total,
         })
     return pd.DataFrame(rows)
 
-# 母集団の選択
 index_label = st.selectbox("対象とする市場（指数）を選択", list(INDEX_OPTIONS.keys()))
 index_code = INDEX_OPTIONS[index_label]
 
 with st.spinner(f"{index_label} を取得・計算中…（銘柄数により1〜数分）"):
-    raw, tickers, name_map = load_raw(index_code)
+    raw, tickers, name_map, fetched_at = load_raw(index_code)
     df = build_scores(raw, tickers, name_map)
 
 df = df.sort_values("総合スコア", ascending=False).reset_index(drop=True)
 df.index = df.index + 1
 st.success(f"{len(df)} 銘柄を分析しました")
+st.info(f"データ最終取得：{fetched_at.strftime('%Y年%m月%d日 %H:%M')}（日本時間） ※株価は15〜20分遅れの遅延データ")
 
-top_n = st.slider("表示する上位件数", 10, len(df), 30, step=5)
-view = df.head(top_n)
+col_a, col_b = st.columns(2)
+with col_a:
+    top_n = st.slider("表示する上位件数", 10, len(df), 30, step=5)
+with col_b:
+    sig_filter = st.selectbox("シグナルで絞り込む",
+                              ["すべて", "押し目候補", "過熱注意", "出来高急増"])
+
+view = df.copy()
+if sig_filter != "すべて":
+    view = view[view["シグナル"].str.contains(sig_filter)]
+view = view.head(top_n)
 
 st.subheader("総合スコアランキング")
+def color_chg(v):
+    if v > 0: return "color: green"
+    if v < 0: return "color: red"
+    return ""
 styled = (view.style
     .background_gradient(subset=["総合スコア"], cmap="RdYlGn", vmin=40, vmax=100)
     .bar(subset=["RSIスコア","トレンドスコア","押し目スコア","MACDスコア","価格位置スコア"],
          color="#9ad0ec", vmin=0, vmax=20)
-    .format({"終値$":"{:.2f}", "RSI":"{:.1f}", "25日線乖離%":"{:+.1f}"})
+    .applymap(color_chg, subset=["前日比%"])
+    .format({"終値$":"{:.2f}", "前日比%":"{:+.2f}", "RSI":"{:.1f}",
+             "25日線乖離%":"{:+.1f}", "出来高倍率":"{:.1f}倍"})
 )
 st.dataframe(styled, use_container_width=True, height=600)
 
-# 上位3銘柄
 st.subheader("上位3銘柄")
 top3 = view.head(3).reset_index()
 cols = st.columns(3)
 medals = ["1位", "2位", "3位"]
 for i, (_, r) in enumerate(top3.iterrows()):
     with cols[i]:
-        st.metric(f"{medals[i]}　{r['ティッカー']}", f"{r['総合スコア']} 点", help=r["銘柄"])
+        st.metric(f"{medals[i]}　{r['ティッカー']}",
+                  f"{r['総合スコア']} 点", f"{r['前日比%']:+.2f}%")
         st.progress(int(r["総合スコア"]) / 100)
-        st.caption(f"RSI {r['RSIスコア']} / トレンド {r['トレンドスコア']} / "
-                   f"押し目 {r['押し目スコア']} / MACD {r['MACDスコア']} / 位置 {r['価格位置スコア']}")
+        st.caption(f"シグナル: {r['シグナル']}")
 
-# 銘柄チャート
 st.divider()
 st.subheader("銘柄チャート（株価＋移動平均線＋RSI）")
 choices = [f"{r['ティッカー']}　{r['銘柄']}" for _, r in df.iterrows()]
@@ -182,4 +219,4 @@ fig.update_layout(height=600, hovermode="x unified", legend=dict(orientation="h"
 st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
-st.caption("構成銘柄は yfiua/index-constituents、株価は yfinance の遅延データ。配点は一例で上がる確率ではありません。最終判断はご自身で。")
+st.caption("構成銘柄は yfiua/index-constituents、株価は yfinance の遅延データ。スコア・シグナルは一例で上がる確率ではありません。最終判断はご自身で。")
